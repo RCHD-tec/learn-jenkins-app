@@ -30,21 +30,29 @@ pipeline {
                             reuseNode true
                         }
                     }
+                    environment {
+                        JEST_JUNIT_OUTPUT_DIR = 'test-results'
+                        JEST_JUNIT_OUTPUT_NAME = 'junit-unit.xml'
+                    }
                     steps {
                         sh '''
-                            # Instala o reporter do JUnit
+                            # Garante que o diretório existe
+                            mkdir -p test-results
+                            
+                            # Instala o reporter (se necessário)
                             npm install --save-dev jest-junit
                             
-                            # Roda testes com saída JUnit
+                            # Executa testes com configuração explícita
                             CI=true npm test -- --reporters=default --reporters=jest-junit
                             
-                            # Verifica se o relatório foi gerado
-                            ls -la test-results || true
+                            # Debug: lista arquivos gerados
+                            echo "Conteúdo de test-results:"
+                            ls -la test-results/ || true
                         '''
                     }
                     post {
                         always {
-                            junit 'test-results/junit.xml'
+                            junit 'test-results/junit-unit.xml'
                         }
                     }
                 }
@@ -52,36 +60,45 @@ pipeline {
                 stage('Testes E2E') {
                     agent {
                         docker {
-                            // Atualizado para a versão necessária
                             image 'mcr.microsoft.com/playwright:v1.54.2-jammy'
                             reuseNode true
                         }
                     }
                     steps {
                         sh '''
-                            # Instala o serve e roda a aplicação
+                            # Prepara ambiente
+                            mkdir -p test-results
+                            
+                            # Instala dependências
                             npm install serve
+                            
+                            # Inicia servidor
                             node_modules/.bin/serve -s build &
                             SERVE_PID=$!
                             sleep 10
                             
-                            # Roda testes do Playwright
-                            npx playwright test --reporter=junit,html
+                            # Executa testes com saída JUnit
+                            npx playwright test --reporter=junit,html --output=test-results/junit-e2e.xml
                             
-                            # Para o processo do serve
+                            # Encerra servidor
                             kill $SERVE_PID
+                            
+                            # Debug: lista arquivos gerados
+                            echo "Conteúdo do diretório:"
+                            ls -la test-results/ || true
+                            ls -la playwright-report/ || true
                         '''
                     }
                     post {
                         always {
-                            junit 'test-results/**/*.xml'
+                            junit 'test-results/junit-e2e.xml'
                             publishHTML([
                                 allowMissing: true,
                                 alwaysLinkToLastBuild: true,
                                 keepAll: true,
                                 reportDir: 'playwright-report',
                                 reportFiles: 'index.html',
-                                reportName: 'Relatório HTML Playwright'
+                                reportName: 'Relatório Playwright'
                             ])
                         }
                     }
@@ -93,6 +110,7 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'test-results/**/*, playwright-report/**/*'
+            sh 'echo "Artefatos arquivados:"; ls -la test-results/ playwright-report/ || true'
         }
     }
 }
