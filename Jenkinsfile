@@ -2,8 +2,6 @@ pipeline {
     agent any
 
     stages {
-        /*
-
         stage('Build') {
             agent {
                 docker {
@@ -22,55 +20,79 @@ pipeline {
                 '''
             }
         }
-        */
 
-        stage('Tests') {
+        stage('Testes') {
             parallel {
-                stage('Unit tests') {
+                stage('Testes Unitários') {
                     agent {
                         docker {
                             image 'node:18-alpine'
                             reuseNode true
                         }
                     }
-
                     steps {
                         sh '''
-                            #test -f build/index.html
-                            npm test
+                            # Instala o reporter do JUnit
+                            npm install --save-dev jest-junit
+                            
+                            # Roda testes com saída JUnit
+                            CI=true npm test -- --reporters=default --reporters=jest-junit
+                            
+                            # Verifica se o relatório foi gerado
+                            ls -la test-results || true
                         '''
                     }
                     post {
                         always {
-                            junit 'jest-results/junit.xml'
+                            junit 'test-results/junit.xml'
                         }
                     }
                 }
 
-                stage('E2E') {
+                stage('Testes E2E') {
                     agent {
                         docker {
-                            image 'mcr.microsoft.com/playwright:v1.39.0-jammy'
+                            // Atualizado para a versão necessária
+                            image 'mcr.microsoft.com/playwright:v1.54.2-jammy'
                             reuseNode true
                         }
                     }
-
                     steps {
                         sh '''
+                            # Instala o serve e roda a aplicação
                             npm install serve
                             node_modules/.bin/serve -s build &
+                            SERVE_PID=$!
                             sleep 10
-                            npx playwright test  --reporter=html
+                            
+                            # Roda testes do Playwright
+                            npx playwright test --reporter=junit,html
+                            
+                            # Para o processo do serve
+                            kill $SERVE_PID
                         '''
                     }
-
                     post {
                         always {
-                            publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'playwright-report', reportFiles: 'index.html', reportName: 'Playwright HTML Report', reportTitles: '', useWrapperFileDirectly: true])
+                            junit 'test-results/**/*.xml'
+                            publishHTML([
+                                allowMissing: true,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'playwright-report',
+                                reportFiles: 'index.html',
+                                reportName: 'Relatório HTML Playwright'
+                            ])
                         }
                     }
                 }
             }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'test-results/**/*, playwright-report/**/*'
         }
     }
 }
